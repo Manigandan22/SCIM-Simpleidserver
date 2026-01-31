@@ -1,26 +1,26 @@
 using SimpleIdServer.Scim.Persistence;
 using SimpleIdServer.Scim.Domains;
-using SimpleIdServer.Scim.Parser.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-using Scim.Shared.Services;
-using Scim.Shared.Models;
+using Scim.Domain.Services;
+using Scim.Contracts;
 using Scim.Api.Validators;
 using System.Linq;
+using SimpleIdServer.Scim.Parser.Expressions;
 
-namespace Scim.Api.Services
+namespace Scim.Api.Decorators
 {
-    public class ScimEventPublisher : ISCIMRepresentationCommandRepository
+    public class ScimRepositoryDecorator : ISCIMRepresentationCommandRepository
     {
         private readonly ISCIMRepresentationCommandRepository _inner;
-        private readonly IServiceBusPublisher _publisher;
+        private readonly IScimNotificationService _notificationService;
         private readonly UserValidator _userValidator;
 
-        public ScimEventPublisher(ISCIMRepresentationCommandRepository inner, IServiceBusPublisher publisher, UserValidator userValidator)
+        public ScimRepositoryDecorator(ISCIMRepresentationCommandRepository inner, IScimNotificationService notificationService, UserValidator userValidator)
         {
             _inner = inner;
-            _publisher = publisher;
+            _notificationService = notificationService;
             _userValidator = userValidator;
         }
 
@@ -30,13 +30,14 @@ namespace Scim.Api.Services
             var result = await _inner.Add(representation, token);
             if (result)
             {
-                await _publisher.PublishAsync(new ScimNotification
+                var evt = new RepresentationAddedEvent
                 {
+                    Id = representation.Id,
                     ResourceType = representation.ResourceType,
-                    Action = "Create",
-                    ResourceId = representation.Id,
-                    Payload = representation.Id
-                });
+                    RepresentationJson = representation.Id, // TODO: Serialize full if needed
+                    Version = representation.Version
+                };
+                await _notificationService.NotifyAddedAsync(evt, token);
             }
             return result;
         }
@@ -47,12 +48,14 @@ namespace Scim.Api.Services
             var result = await _inner.Update(representation, token);
             if (result)
             {
-                await _publisher.PublishAsync(new ScimNotification
+                var evt = new RepresentationUpdatedEvent
                 {
+                    Id = representation.Id,
                     ResourceType = representation.ResourceType,
-                    Action = "Update",
-                    ResourceId = representation.Id
-                });
+                    RepresentationJson = representation.Id,
+                    Version = representation.Version
+                };
+                await _notificationService.NotifyUpdatedAsync(evt, token);
             }
             return result;
         }
@@ -62,47 +65,24 @@ namespace Scim.Api.Services
             var result = await _inner.Delete(representation, token);
             if (result)
             {
-                await _publisher.PublishAsync(new ScimNotification
+                var evt = new RepresentationRemovedEvent
                 {
-                    ResourceType = representation.ResourceType,
-                    Action = "Delete",
-                    ResourceId = representation.Id
-                });
+                    Id = representation.Id,
+                    ResourceType = representation.ResourceType
+                };
+                await _notificationService.NotifyRemovedAsync(evt, token);
             }
             return result;
         }
 
-        // Bulk operations
-        public async Task BulkInsert(IEnumerable<SCIMRepresentationAttribute> attributes, string representationId, bool verify = true)
-        {
-             await _inner.BulkInsert(attributes, representationId, verify);
-        }
-
-        public async Task BulkDelete(IEnumerable<SCIMRepresentationAttribute> attributes, string representationId, bool verify = true)
-        {
-            await _inner.BulkDelete(attributes, representationId, verify);
-        }
-
-        public async Task BulkUpdate(IEnumerable<SCIMRepresentationAttribute> attributes, bool verify = true)
-        {
-            await _inner.BulkUpdate(attributes, verify);
-        }
-
-        // Delegating other members
+        // Delegating methods
         public Task<SCIMRepresentation> Get(string id, string resourceType, CancellationToken token) => _inner.Get(id, resourceType, token);
         public Task<ITransaction> StartTransaction(CancellationToken token) => _inner.StartTransaction(token);
 
-        // This method seems to cause issues. It appears ISCIMRepresentationCommandRepository inherits from ISCIMRepresentationQueryRepository?
-        // If so, FindRepresentations(SearchSCIMRepresentationsParameter...) belongs to QueryRepository.
-        // But the class must implement CommandRepository.
-        // The error suggests that _inner.FindRepresentations(...) is resolving to the WRONG overload, trying to match (List<string>, string) signature but with SearchParameter.
+        public Task BulkInsert(IEnumerable<SCIMRepresentationAttribute> attributes, string representationId, bool verify = true) => _inner.BulkInsert(attributes, representationId, verify);
+        public Task BulkDelete(IEnumerable<SCIMRepresentationAttribute> attributes, string representationId, bool verify = true) => _inner.BulkDelete(attributes, representationId, verify);
+        public Task BulkUpdate(IEnumerable<SCIMRepresentationAttribute> attributes, bool verify = true) => _inner.BulkUpdate(attributes, verify);
 
-        // I will NOT implement the QueryRepository methods here if they are not in CommandRepository interface.
-        // But the previous compilation errors said "does not implement interface member ... FindRepresentations".
-
-        // Let's implement ALL methods required by ISCIMRepresentationCommandRepository manually, and check if it builds.
-
-        // Method 1: (List<string>, string, CancellationToken) -> List<SCIMRepresentation>
         public Task<List<SCIMRepresentation>> FindRepresentations(List<string> representationIds, string resourceType, CancellationToken token)
              => _inner.FindRepresentations(representationIds, resourceType, token);
 

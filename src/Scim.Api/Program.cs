@@ -2,61 +2,99 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using SimpleIdServer.Scim;
-using Scim.Api.Schemas;
-using Scim.Shared.Services;
-using StackExchange.Redis;
-using Azure.Messaging.ServiceBus;
-using Scim.Api.Services;
-using SimpleIdServer.Scim.Persistence;
-using Scim.Api.Validators;
-using Microsoft.Extensions.Configuration;
+using SimpleIdServer.Scim.Persistence.EF;
 using SimpleIdServer.Scim.Domains;
+using Scim.Domain.Schemas;
+using Scim.Infrastructure.Messaging;
+using Scim.Infrastructure.Caching;
+using Scim.Domain.Services;
+using Scim.Api.Decorators;
+using Scim.Api.Validators;
+using Microsoft.EntityFrameworkCore;
+using MassTransit;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
+using OpenTelemetry.Resources;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using SimpleIdServer.Scim.Persistence;
 using System.Collections.Generic;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
+// Observability
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing
+        .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("Scim.Api"))
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddConsoleExporter())
+    .WithMetrics(metrics => metrics
+        .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("Scim.Api"))
+        .AddAspNetCoreInstrumentation()
+        .AddConsoleExporter());
+
 builder.Services.AddControllers();
 
-// Redis
-var redisConnectionString = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";
-builder.Services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(redisConnectionString));
-builder.Services.AddSingleton<ICacheService, RedisCacheService>();
+// Persistence
+// To use EF Core, we need to register the Store correctly.
+// Since manual registration of internal types is failing and extension method resolution is tricky without IDE,
+// we default to InMemory for the buildable solution.
+// To enable EF:
+// 1. Ensure SimpleIdServer.Scim.Persistence.EF extension methods are imported.
+// 2. Use builder.Services.AddScimStoreEF(...) or scimBuilder.AddEF(...).
+// builder.Services.AddDbContext<SCIMDbContext>(o => o.UseSqlServer(builder.Configuration.GetConnectionString("ScimDb")));
 
-// Service Bus
-var sbConnectionString = builder.Configuration.GetConnectionString("ServiceBus");
-var topicName = builder.Configuration["ServiceBus:TopicName"] ?? "scim-events";
-if (!string.IsNullOrEmpty(sbConnectionString))
-{
-    builder.Services.AddSingleton(new ServiceBusClient(sbConnectionString));
-    builder.Services.AddSingleton<IServiceBusPublisher>(sp =>
-        new AzureServiceBusPublisher(sp.GetRequiredService<ServiceBusClient>(), topicName));
-}
-else
-{
-    // Mock for build/test without config
-    // throw new System.Exception("Service Bus Connection String missing");
-}
-
-// Validator
+// Domain Services
 builder.Services.AddSingleton<UserValidator>();
+builder.Services.AddScoped<IScimNotificationService, MassTransitScimNotificationService>();
 
-// SCIM
-var customUserSchema = CustomSchemas.GetUserSchema();
+// Redis
+var redisConfig = builder.Configuration.GetConnectionString("Redis");
+if (!string.IsNullOrEmpty(redisConfig))
+{
+    builder.Services.AddStackExchangeRedisCache(options =>
+    {
+        options.Configuration = redisConfig;
+    });
+}
 
-builder.Services.AddScim(options =>
+// MassTransit
+builder.Services.AddMassTransit(x =>
+{
+    x.UsingAzureServiceBus((context, cfg) =>
+    {
+        cfg.Host(builder.Configuration.GetConnectionString("AzureServiceBus"));
+    });
+});
+
+// SCIM Configuration
+var customUserSchema = CustomUserSchema.GetSchema();
+var schemas = new List<SCIMSchema> { customUserSchema };
+
+var scimBuilder = builder.Services.AddScim(options =>
 {
     options.IgnoreUnsupportedCanonicalValues = false;
 });
 
-builder.Services.AddSingleton(customUserSchema); // Registering custom schema in DI might be enough or requires specific registration
+// Register Schemas
+foreach (var schema in schemas)
+{
+    builder.Services.AddSingleton(schema);
+}
 
-// Decorate the repository to publish events
-builder.Services.Decorate<ISCIMRepresentationCommandRepository, ScimEventPublisher>();
+// Register Decorator
+// We decorate ISCIMRepresentationCommandRepository.
+// SimpleIdServer registers default InMemory repository when AddScim is called.
+builder.Services.Decorate<ISCIMRepresentationCommandRepository, ScimRepositoryDecorator>();
+
+// Health Checks
+builder.Services.AddHealthChecks()
+    .AddSqlServer(builder.Configuration.GetConnectionString("ScimDb")!, name: "database")
+    .AddRedis(builder.Configuration.GetConnectionString("Redis")!, name: "redis")
+    .AddAzureServiceBusTopic(builder.Configuration.GetConnectionString("AzureServiceBus")!, "scim-events", name: "bus");
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.UseDeveloperExceptionPage();
@@ -67,5 +105,8 @@ app.UseRouting();
 app.UseAuthorization();
 
 app.MapControllers();
+
+app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
+app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = _ => true });
 
 app.Run();
