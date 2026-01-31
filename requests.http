@@ -1,0 +1,49 @@
+@host = http://localhost:5000
+
+### Get Service Provider Config
+GET {{host}}/ServiceProviderConfig
+
+### Get Schemas
+GET {{host}}/Schemas
+
+### Create User with Custom Attributes
+POST {{host}}/Users
+Content-Type: application/scim+json
+
+{
+  "schemas": [
+    "urn:ietf:params:scim:schemas:core:2.0:User",
+    "urn:example:params:scim:schemas:extension:custom:2.0:User"
+  ],
+  "userName": "jdoe@example.com",
+  "name": {
+    "familyName": "Doe",
+    "givenName": "John"
+  },
+  "urn:example:params:scim:schemas:extension:custom:2.0:User": {
+    "employeeNumber": "EMP123",
+    "departmentCode": "IT",
+    "region": "US"
+  }
+}
+
+### Get User
+GET {{host}}/Users/<user_id>
+
+### Patch User
+PATCH {{host}}/Users/<user_id>
+Content-Type: application/scim+json
+
+{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+  "Operations": [
+    {
+      "op": "replace",
+      "path": "urn:example:params:scim:schemas:extension:custom:2.0:User:departmentCode",
+      "value": "HR"
+    }
+  ]
+}
+
+### Delete User
+DELETE {{host}}/Users/<user_id>
