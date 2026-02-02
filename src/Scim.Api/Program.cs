@@ -33,7 +33,8 @@ builder.Services.AddOpenTelemetry()
         .AddAspNetCoreInstrumentation()
         .AddConsoleExporter());
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddApplicationPart(typeof(SimpleIdServer.Scim.SCIMConstants).Assembly); // Ensure SCIM controllers are discovered
 
 // Persistence
 // To use EF Core, we need to register the Store correctly.
