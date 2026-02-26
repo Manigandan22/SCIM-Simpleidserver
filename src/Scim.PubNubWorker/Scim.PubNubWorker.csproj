@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-Scim.PubNubWorker-b3c1f4d2-8e7a-4b9c-a1e6-d5f8c2b7e3a9</UserSecretsId>
+    <RootNamespace>Scim.PubNubWorker</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- PubNub SDK -->
+    <PackageReference Include="PubnubApi" Version="6.19.14" />
+
+    <!-- Redis client -->
+    <PackageReference Include="StackExchange.Redis" Version="2.7.4" />
+
+    <!-- Hosting -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
+
+    <!-- Resilience (Polly v8 via Microsoft.Extensions) -->
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="8.4.0" />
+
+    <!-- Observability -->
+    <PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.7.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.7.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.7.0" />
+
+    <!-- Health checks -->
+    <PackageReference Include="AspNetCore.HealthChecks.Redis" Version="8.0.0" />
+
+    <!-- Options validation -->
+    <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>
