@@ -1,11 +1,19 @@
 version: '3.8'
 
+# ─── Volumes ──────────────────────────────────────────────────────────────────
+volumes:
+  elasticsearch-data:
+    driver: local
+
 services:
+
+  # ─── Redis ──────────────────────────────────────────────────────────────────
   redis:
     image: redis:alpine
     ports:
       - "6379:6379"
 
+  # ─── SQL Server ─────────────────────────────────────────────────────────────
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
     environment:
@@ -13,3 +21,42 @@ services:
       - SA_PASSWORD=YourStrong@Passw0rd
     ports:
       - "1433:1433"
+
+  # ─── Elasticsearch ──────────────────────────────────────────────────────────
+  # Security (basic auth) is enabled via xpack.security.
+  # Username: elastic  /  Password: changeme
+  # Update appsettings.json / environment variables to match if you change these.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.18
+    environment:
+      - discovery.type=single-node
+      # Enable X-Pack security so basic auth is required
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=changeme
+      # Constrain JVM heap to avoid OOM on dev machines
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsu elastic:changeme http://localhost:9200/_cluster/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+
+  # ─── Kibana ─────────────────────────────────────────────────────────────────
+  # Access Kibana at http://localhost:5601
+  # Login: elastic / changeme
+  # Discover → select index pattern "scim-api-*" to visualise the SCIM API logs.
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.18
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=changeme
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
